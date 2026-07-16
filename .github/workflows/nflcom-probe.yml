@@ -1,0 +1,53 @@
+name: nflcom-probe
+# One-off probe: can GitHub runner IPs fetch NFL.com server-rendered stat pages?
+# Fetches ~10 representative pages and reports status + parse sanity. No data is stored.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: probe nfl.com
+        shell: python
+        run: |
+          import time, urllib.request, urllib.error
+
+          UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
+          PAGES = [
+              "https://www.nfl.com/players/jim-brown/stats/logs/1963/",
+              "https://www.nfl.com/players/bart-starr/stats/logs/1967/",
+              "https://www.nfl.com/players/sammy-baugh/stats/",
+              "https://www.nfl.com/players/jim-brown/stats/splits/1963/",
+              "https://www.nfl.com/players/jim-brown/stats/situational/1963/",
+              "https://www.nfl.com/players/patrick-mahomes/stats/logs/2023/",
+              "https://www.nfl.com/stats/player-stats/category/passing/1963/reg/all/passingyards/desc",
+              "https://www.nfl.com/stats/player-stats/category/rushing/2023/post/all/rushingyards/desc",
+              "https://www.nfl.com/stats/team-stats/offense/passing/1970/reg/all",
+              "https://www.nfl.com/players/tom-matte/stats/logs/1968/",
+          ]
+          ok = 0
+          for u in PAGES:
+              req = urllib.request.Request(u, headers={"User-Agent": UA})
+              try:
+                  t0 = time.time()
+                  with urllib.request.urlopen(req, timeout=30) as r:
+                      html = r.read().decode("utf-8", errors="replace")
+                  dt = time.time() - t0
+                  tables = html.count("<table")
+                  rows = html.count("<tr")
+                  marker = ("Regular Season" in html) or ("Post Season" in html) or rows > 5
+                  status = "OK" if (r.status == 200 and tables >= 1 and marker) else "SUSPECT"
+                  if status == "OK":
+                      ok += 1
+                  print(f"[{status}] {r.status} {dt:4.1f}s tables={tables} tr={rows}  {u}")
+              except urllib.error.HTTPError as e:
+                  print(f"[FAIL] HTTP {e.code}  {u}")
+              except Exception as e:
+                  print(f"[FAIL] {type(e).__name__}: {e}  {u}")
+              time.sleep(1.2)
+          print(f"\nRESULT: {ok}/{len(PAGES)} pages parsed clean")
+          raise SystemExit(0 if ok == len(PAGES) else 1)
