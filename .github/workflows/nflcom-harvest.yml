@@ -1,0 +1,62 @@
+name: nflcom-harvest
+# One-off distributed NFL.com player-stats crawl (see nflcom/harvest_runner.py).
+# Dispatch with num_shards (default 60); each matrix job crawls its hash-shard of the player
+# universe and uploads parquet as an artifact. Merge locally with
+# yahoo_oauth scripts/sota_recon/nflcom_merge_runner_shards.py.
+
+on:
+  workflow_dispatch:
+    inputs:
+      num_shards:
+        description: "total shards"
+        default: "60"
+      shards:
+        description: "comma list of shard ids to run (blank = all)"
+        default: ""
+      views:
+        description: "views to crawl"
+        default: "logs,career,splits,situational"
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.mk.outputs.matrix }}
+    steps:
+      - id: mk
+        shell: python
+        run: |
+          import json, os
+          n = int("${{ inputs.num_shards }}")
+          only = "${{ inputs.shards }}".strip()
+          ids = [int(x) for x in only.split(",")] if only else list(range(n))
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write("matrix=" + json.dumps(ids) + "\n")
+
+  harvest:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      max-parallel: 15
+      matrix:
+        shard: ${{ fromJson(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install --quiet pandas pyarrow
+      - run: >
+          python nflcom/harvest_runner.py
+          --shard ${{ matrix.shard }}
+          --num-shards ${{ inputs.num_shards }}
+          --views "${{ inputs.views }}"
+          --out out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nflcom-shard-${{ matrix.shard }}
+          path: out/
+          retention-days: 14
+          if-no-files-found: warn
