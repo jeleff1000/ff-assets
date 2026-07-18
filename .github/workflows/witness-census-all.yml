@@ -1,0 +1,48 @@
+name: witness-census-all
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "harvest/**"
+      - "requirements-harvest.txt"
+      - ".github/workflows/witness-census-all.yml"
+  workflow_dispatch:
+
+jobs:
+  census:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        source:
+          - {name: nflcom, dataset: team_season_roster, year_start: 1920, year_end: 2025}
+          - {name: statscrew, dataset: team_season_roster, year_start: 1920, year_end: 2025}
+          - {name: profootballarchives, dataset: player_game_participation, year_start: 1919, year_end: 2025}
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install --requirement requirements-harvest.txt
+      - run: python -m pytest tests -q
+      - name: Census complete approved namespace
+        run: >-
+          python -m harvest.census
+          --source "${{ matrix.source.name }}"
+          --dataset "${{ matrix.source.dataset }}"
+          --year-start "${{ matrix.source.year_start }}"
+          --year-end "${{ matrix.source.year_end }}"
+          --max-pages 10000
+          --shard "${{ matrix.shard }}"
+          --num-shards 20
+          --out "out/shard-${{ matrix.shard }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: witness-census-${{ matrix.source.name }}-${{ matrix.source.dataset }}-${{ matrix.shard }}
+          path: out/
+          retention-days: 14
+          if-no-files-found: error

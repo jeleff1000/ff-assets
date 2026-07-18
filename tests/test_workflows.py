@@ -19,10 +19,18 @@ def test_new_workflows_are_manual_safe_and_artifact_backed() -> None:
 
 
 def test_bulk_workflows_bound_parallelism_and_runtime() -> None:
-    for name in ("witness-census.yml", "witness-harvest.yml"):
+    for name in ("witness-census.yml", "witness-census-all.yml", "witness-harvest.yml"):
         text = (WORKFLOWS / name).read_text(encoding="utf-8")
         assert "max-parallel:" in text
         assert "timeout-minutes:" in text
-        assert "num_shards" in text
-        assert "max_pages" in text
+        assert "num_shards" in text or "--num-shards" in text
+        assert "max_pages" in text or "--max-pages" in text
 
+
+def test_all_source_census_runs_on_harvest_changes() -> None:
+    text = (WORKFLOWS / "witness-census-all.yml").read_text(encoding="utf-8")
+    assert "push:" in text
+    assert "nflcom" in text
+    assert "statscrew" in text
+    assert "profootballarchives" in text
+    assert "shard: [0, 1, 2" in text
