@@ -1,0 +1,50 @@
+sources:
+  nflcom:
+    domains: [www.nfl.com]
+    delay_seconds: 0.75
+    datasets:
+      team_season_roster:
+        first_year: 1920
+        last_year: 2025
+        allowed_prefixes: [/sitemap/html/rosters/]
+        census_seed_ranges:
+          - first_year: 1920
+            last_year: 2025
+            template: https://www.nfl.com/sitemap/html/rosters/{year}/
+      player_game_stats:
+        first_year: 1920
+        last_year: 2025
+        allowed_prefixes: [/players/]
+  profootballarchives:
+    domains: [www.profootballarchives.com, profootballarchives.com]
+    delay_seconds: 1.0
+    datasets:
+      team_season_roster:
+        first_year: 1919
+        last_year: 2025
+        allowed_prefixes: [/]
+      player_game_participation:
+        first_year: 1919
+        last_year: 2025
+        allowed_prefixes: [/nflboxscores]
+        census_seed_ranges:
+          - first_year: 1919
+            last_year: 1921
+            template: https://www.profootballarchives.com/{year}apfa-boxscores.html
+          - first_year: 1922
+            last_year: 2025
+            template: https://www.profootballarchives.com/{year}nfl-boxscores.html
+  statscrew:
+    domains: [www.statscrew.com]
+    delay_seconds: 1.0
+    datasets:
+      team_season_roster:
+        first_year: 1920
+        last_year: 2025
+        allowed_prefixes: [/football/roster/]
+        seed_inventory: team_seasons.csv
+        census_seed_template: https://www.statscrew.com/football/roster/t-{team}/y-{year}
+      player_season_stats:
+        first_year: 1920
+        last_year: 2025
+        allowed_prefixes: [/football/stats/]

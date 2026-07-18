@@ -1,0 +1,44 @@
+name: witness-probe
+
+on:
+  workflow_dispatch:
+    inputs:
+      source:
+        description: Source adapter name
+        required: true
+        default: nflcom
+      dataset:
+        description: Catalog dataset name
+        required: true
+        default: team_season_roster
+      seed:
+        description: Representative public URL to probe
+        required: true
+        default: https://www.nfl.com/sitemap/html/rosters/1921/dayton-triangles
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install --requirement requirements-harvest.txt
+      - run: python -m pytest tests -q
+      - name: Probe and classify one page
+        run: >-
+          python -m harvest.census
+          --source "${{ inputs.source }}"
+          --dataset "${{ inputs.dataset }}"
+          --seed "${{ inputs.seed }}"
+          --max-pages 1
+          --out out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: witness-probe-${{ inputs.source }}-${{ inputs.dataset }}
+          path: out/
+          retention-days: 14
+          if-no-files-found: error
+

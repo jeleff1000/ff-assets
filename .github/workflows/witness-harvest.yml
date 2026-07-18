@@ -1,0 +1,100 @@
+name: witness-harvest
+
+on:
+  workflow_dispatch:
+    inputs:
+      source:
+        description: Source adapter name
+        required: true
+        default: nflcom
+      dataset:
+        description: Catalog dataset name
+        required: true
+        default: team_season_roster
+      year_start:
+        description: First reviewed season to harvest (blank uses catalog minimum)
+        required: false
+        default: ""
+      year_end:
+        description: Last reviewed season to harvest (blank uses catalog maximum)
+        required: false
+        default: ""
+      num_shards:
+        description: Total deterministic shards
+        required: true
+        default: "20"
+      shards:
+        description: Comma-separated shard IDs; blank runs all
+        required: false
+        default: ""
+      max_pages:
+        description: Maximum discovered pages per shard
+        required: true
+        default: "10000"
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.value }}
+    steps:
+      - id: matrix
+        shell: python
+        run: |
+          import json, os
+          count = int("${{ inputs.num_shards }}")
+          selected = "${{ inputs.shards }}".strip()
+          shards = [int(value) for value in selected.split(",")] if selected else list(range(count))
+          if count < 1 or count > 100 or any(value < 0 or value >= count for value in shards):
+              raise SystemExit("invalid shard selection")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
+              handle.write("value=" + json.dumps(shards) + "\n")
+
+  harvest:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        shard: ${{ fromJson(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install --requirement requirements-harvest.txt
+      - run: python -m pytest tests -q
+      - name: Rediscover reviewed work items
+        shell: bash
+        run: |
+          args=()
+          [[ -n "${{ inputs.year_start }}" ]] && args+=(--year-start "${{ inputs.year_start }}")
+          [[ -n "${{ inputs.year_end }}" ]] && args+=(--year-end "${{ inputs.year_end }}")
+          python -m harvest.census \
+            --source "${{ inputs.source }}" \
+            --dataset "${{ inputs.dataset }}" \
+            --max-pages "${{ inputs.max_pages }}" \
+            --shard "${{ matrix.shard }}" \
+            --num-shards "${{ inputs.num_shards }}" \
+            --out "census/shard-${{ matrix.shard }}" \
+            "${args[@]}"
+      - name: Harvest normalized records and raw evidence
+        run: >-
+          python -m harvest.runner
+          --source "${{ inputs.source }}"
+          --dataset "${{ inputs.dataset }}"
+          --work-items "census/shard-${{ matrix.shard }}/WORK_ITEMS.jsonl"
+          --shard "${{ matrix.shard }}"
+          --num-shards "${{ inputs.num_shards }}"
+          --work-items-prepartitioned
+          --out "harvest/shard-${{ matrix.shard }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: witness-harvest-${{ inputs.source }}-${{ inputs.dataset }}-${{ matrix.shard }}
+          path: |
+            census/
+            harvest/
+          retention-days: 14
+          if-no-files-found: error
