@@ -1,0 +1,52 @@
+name: witness-harvest-all
+
+on:
+  workflow_run:
+    workflows: [witness-census-all]
+    types: [completed]
+
+jobs:
+  harvest:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        source:
+          - {name: nflcom, dataset: team_season_roster}
+          - {name: statscrew, dataset: team_season_roster}
+          - {name: profootballarchives, dataset: player_game_participation}
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install --requirement requirements-harvest.txt
+      - run: python -m pytest tests -q
+      - name: Download reviewed census shard
+        uses: actions/download-artifact@v4
+        with:
+          name: witness-census-${{ matrix.source.name }}-${{ matrix.source.dataset }}-${{ matrix.shard }}
+          path: census
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+      - name: Harvest normalized records and raw evidence
+        run: >-
+          python -m harvest.runner
+          --source "${{ matrix.source.name }}"
+          --dataset "${{ matrix.source.dataset }}"
+          --work-items "census/shard-${{ matrix.shard }}/WORK_ITEMS.jsonl"
+          --shard "${{ matrix.shard }}"
+          --num-shards 20
+          --work-items-prepartitioned
+          --run-id "${{ github.run_id }}"
+          --out "harvest/shard-${{ matrix.shard }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: witness-harvest-${{ matrix.source.name }}-${{ matrix.source.dataset }}-${{ matrix.shard }}
+          path: harvest/
+          retention-days: 14
+          if-no-files-found: error

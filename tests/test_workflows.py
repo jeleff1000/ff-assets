@@ -34,3 +34,15 @@ def test_all_source_census_runs_on_harvest_changes() -> None:
     assert "statscrew" in text
     assert "profootballarchives" in text
     assert "shard: [0, 1, 2" in text
+
+
+def test_all_source_harvest_continues_only_after_successful_census() -> None:
+    path = WORKFLOWS / "witness-harvest-all.yml"
+    text = path.read_text(encoding="utf-8")
+    data = yaml.load(text, Loader=yaml.BaseLoader)
+    assert "workflow_run" in data["on"]
+    assert "witness-census-all" in text
+    assert "conclusion == 'success'" in text
+    assert "run-id: ${{ github.event.workflow_run.id }}" in text
+    assert "--work-items-prepartitioned" in text
+    assert "upload-artifact@v4" in text
