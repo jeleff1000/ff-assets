@@ -134,6 +134,18 @@ def run_pilot(
                 samples.append({"url": url, "schema_fingerprint": fingerprint,
                                 "sample_row": flat[0]})
 
+    if fetched == 0:
+        # A pilot that fetched nothing must FAIL, never emit an empty proposal.
+        # "shapes=0, joinable=False" reads like a finding about the family ("there is
+        # nothing here") when it actually means the sample was empty -- usually because
+        # the family string does not match the patterns in the discovery run it drew
+        # from, e.g. a run produced by an older normalizer.
+        raise SystemExit(
+            f"PILOT FETCHED 0 PAGES for {source} {family}: sampled {len(urls)} url(s), "
+            f"{failed} failed. This is not a finding about the family -- check that the "
+            "--family string matches a url_pattern in the discovery run you passed, and "
+            "that the discovery run was produced by the CURRENT normalizer.")
+
     ordered = sorted(shapes.values(), key=lambda s: -s["pages_carrying"])
     for shape in ordered:
         share = shape["pages_carrying"] / fetched if fetched else 0.0
@@ -215,9 +227,20 @@ def main() -> None:
         urls += [u for u in _sample_urls(args.discovery, family, args.sample)
                  if u not in urls]
     if not urls:
+        # Name the patterns the run DID observe. A bare "no sample URLs" sends you
+        # hunting; the usual cause is a family string from a discovery run built by an
+        # older normalizer, and the fix is obvious once you can see both lists.
+        available = ""
+        if args.discovery:
+            summary_path = args.discovery / "DISCOVERY_SUMMARY.json"
+            if summary_path.is_file():
+                observed = [p["url_pattern"] for p in json.loads(
+                    summary_path.read_text(encoding="utf-8"))["patterns"]][:30]
+                available = ("\n  patterns observed in that discovery run:\n    "
+                             + "\n    ".join(observed))
         raise SystemExit(
-            f"{args.source} {family}: no sample URLs -- pass --url or point "
-            "--discovery at a run that observed this family")
+            f"{args.source} {family}: no sample URLs -- pass --url, or point "
+            f"--discovery at a run that observed this family.{available}")
 
     spec = load_catalog(args.catalog).source(args.source)
     client = HttpClient(delay_seconds=float(spec.get("delay_seconds", 1.0)))

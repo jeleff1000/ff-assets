@@ -60,3 +60,16 @@ def test_pilot_writes_a_reviewable_proposal_and_manifest(tmp_path):
               fetch=lambda u: _resp(html), artifact_run_id="t")
     assert (tmp_path / "PILOT.json").is_file()
     assert (tmp_path / "ARTIFACT_MANIFEST.json").is_file()
+
+
+def test_pilot_fails_loudly_when_it_fetched_nothing(tmp_path):
+    """An empty pilot must raise, not emit "shapes=0, joinable=False". That output reads
+    as a finding about the family ("nothing here") when it really means the sample was
+    empty -- typically a --family string that does not match the discovery run it drew
+    from. Two real runs reported exactly that before this guard existed."""
+    with pytest.raises(SystemExit) as excinfo:
+        run_pilot(source="s", family="/nope/{id}", urls=["u1", "u2"],
+                  output_dir=tmp_path,
+                  fetch=lambda u: Response(u, 404, "absent", b"", ""),
+                  artifact_run_id="t")
+    assert "FETCHED 0 PAGES" in str(excinfo.value)
