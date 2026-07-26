@@ -1,0 +1,62 @@
+name: witness-discover-all
+
+# STAGE 1 of three: DISCOVER -> PILOT -> HARVEST.
+#
+# Discovery answers "what does this source actually publish?" by MEASURING the site's
+# own link graph, never by asserting a table of contents. It walks the catalog's
+# discovery_probes (the site's nav AND footer -- several PFA sections are reachable only
+# from the footer) and follows ONE HOP into a sample of children per newly-seen URL
+# pattern. That hop is the point: a nav-only enumeration missed the PFA transactions
+# table entirely, because it lives inside player pages rather than in a nav section.
+#
+# It fetches a bounded sample, not a corpus: max_pages caps the run and
+# children_per_pattern caps how many examples of each family it will look at. The
+# output is an inventory of url_pattern -> observed table shapes, which is the input the
+# pilot stage needs.
+#
+# CONCURRENCY IS PER HOST, deliberately. One job per source, so the catalog's
+# delay_seconds is the true request rate at each site. Sharding discovery across many
+# runners would multiply that rate against small independent archives for no benefit --
+# discovery is a few hundred pages, not tens of thousands.
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_pages:
+        description: Page budget per source
+        default: "400"
+      children_per_pattern:
+        description: Sample children to follow per URL pattern
+        default: "3"
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 3          # one job per source == one request stream per host
+      matrix:
+        source: [profootballarchives, statscrew, nflcom]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install --requirement requirements-harvest.txt
+      - run: python -m pytest tests -q
+      - name: Discover published surface
+        run: >-
+          python -m harvest.discover
+          --source "${{ matrix.source }}"
+          --out "out/${{ matrix.source }}"
+          --max-pages "${{ github.event.inputs.max_pages || '400' }}"
+          --children-per-pattern "${{ github.event.inputs.children_per_pattern || '3' }}"
+          --run-id "${{ github.run_id }}"
+      - name: Summarise discovered surface
+        run: python -m harvest.discover_report --discovery "out/${{ matrix.source }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: witness-discovery-${{ matrix.source }}
+          path: out/${{ matrix.source }}
+          retention-days: 14

@@ -2,6 +2,9 @@ sources:
   nflcom:
     domains: [www.nfl.com]
     delay_seconds: 0.75
+    discovery_probes:
+      - https://www.nfl.com/sitemap/html/rosters/1963/
+      - https://www.nfl.com/players/steve-smith/stats/
     datasets:
       team_season_roster:
         first_year: 1920
@@ -18,6 +21,26 @@ sources:
   profootballarchives:
     domains: [www.profootballarchives.com, profootballarchives.com]
     delay_seconds: 1.0
+    # Probes are the site's own nav AND footer. The footer entries are load-bearing:
+    # super-bowl / trainingcamps / rosterlimits / officials / in-memoriam are reachable
+    # only from there, so a nav-only probe set under-counts the site.
+    discovery_probes:
+      - https://www.profootballarchives.com/index.html
+      - https://www.profootballarchives.com/leagues.html
+      - https://www.profootballarchives.com/seasons.html
+      - https://www.profootballarchives.com/teams.html
+      - https://www.profootballarchives.com/players.html
+      - https://www.profootballarchives.com/coaches.html
+      - https://www.profootballarchives.com/drafts.html
+      - https://www.profootballarchives.com/awards.html
+      - https://www.profootballarchives.com/leaderboards.html
+      - https://www.profootballarchives.com/nflgamelogcoverage.html
+      - https://www.profootballarchives.com/statkey.html
+      - https://www.profootballarchives.com/nflrosterlimits.html
+      - https://www.profootballarchives.com/super-bowl.html
+      - https://www.profootballarchives.com/trainingcamps.html
+      - https://www.profootballarchives.com/officials.html
+      - https://www.profootballarchives.com/nfl.html
     datasets:
       team_season_roster:
         first_year: 1919
@@ -37,6 +60,17 @@ sources:
   statscrew:
     domains: [www.statscrew.com]
     delay_seconds: 1.0
+    # StatsCrew is a MULTI-SPORT host; probes stay inside /football/ so discovery
+    # measures the NFL surface and never wanders into baseball or lacrosse.
+    discovery_probes:
+      - https://www.statscrew.com/football
+      - https://www.statscrew.com/football/l-NFL
+      - https://www.statscrew.com/football/l-APFA
+      - https://www.statscrew.com/football/l-AAFC
+      - https://www.statscrew.com/football/t-CLE
+      - https://www.statscrew.com/football/stats/t-CLE/y-1963
+      - https://www.statscrew.com/football/results/t-CLE/y-1963
+      - https://www.statscrew.com/football/stats/p-brownjim001
     datasets:
       team_season_roster:
         first_year: 1920

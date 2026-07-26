@@ -46,3 +46,35 @@ def test_all_source_harvest_continues_only_after_successful_census() -> None:
     assert "run-id: ${{ github.event.workflow_run.id }}" in text
     assert "--work-items-prepartitioned" in text
     assert "upload-artifact@v4" in text
+
+
+def test_discovery_workflow_is_per_host_and_bounded() -> None:
+    """Discovery must stay ONE request stream per host and must bound its page budget.
+
+    Sharding discovery across many runners would multiply the request rate against
+    small independent archives for no gain -- discovery is a few hundred pages. The
+    per-host limit is the politeness contract, not an optimisation.
+    """
+    path = WORKFLOWS / "witness-discover-all.yml"
+    text = path.read_text(encoding="utf-8")
+    data = yaml.load(text, Loader=yaml.BaseLoader)
+    assert "workflow_dispatch" in data["on"]
+    assert "pytest" in text
+    assert "upload-artifact@v4" in text
+    assert "retention-days: 14" in text
+    assert "timeout-minutes:" in text
+    assert "max-parallel: 3" in text, "one job per source == one stream per host"
+    assert "--max-pages" in text and "--children-per-pattern" in text
+    for source in ("profootballarchives", "statscrew", "nflcom"):
+        assert source in text
+
+
+def test_every_source_declares_discovery_probes() -> None:
+    """A source with no probes cannot be discovered, and would silently be skipped."""
+    catalog = yaml.safe_load(
+        (Path(__file__).parents[1] / "harvest" / "source_catalog.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    for name, spec in catalog["sources"].items():
+        assert spec.get("discovery_probes"), f"{name}: no discovery_probes declared"
