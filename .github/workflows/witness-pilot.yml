@@ -1,0 +1,61 @@
+name: witness-pilot
+
+# STAGE 2 of three: DISCOVER -> PILOT -> HARVEST.
+#
+# A pilot samples ONE URL family and proves we can structure it before any bulk crawl is
+# authorised. It answers the questions discovery cannot: is the table shape stable across
+# pages or did we look at one lucky example; is there a source-native id (a name alone is
+# the twins hazard); are there multiple tables per page, in which case every captured row
+# must be table-tagged or the distinct tables become unrecoverable.
+#
+# Output is a REGISTRATION PROPOSAL for review. Proposing is not registering: this
+# workflow never edits the catalog.
+
+on:
+  workflow_dispatch:
+    inputs:
+      source:
+        description: Catalog source name
+        required: true
+      family:
+        description: URL pattern from a discovery run, e.g. /players/{letter}/{id}.html
+        required: true
+      sample:
+        description: Pages to sample
+        default: "25"
+      discovery_run_id:
+        description: Run id of the witness-discover-all run to draw example URLs from
+        required: true
+
+jobs:
+  pilot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install --requirement requirements-harvest.txt
+      - run: python -m pytest tests -q
+      - name: Download the discovery run this pilot samples from
+        uses: actions/download-artifact@v4
+        with:
+          name: witness-discovery-${{ github.event.inputs.source }}
+          path: discovery
+          run-id: ${{ github.event.inputs.discovery_run_id }}
+          github-token: ${{ github.token }}
+      - name: Pilot the family
+        run: >-
+          python -m harvest.pilot
+          --source "${{ github.event.inputs.source }}"
+          --family "${{ github.event.inputs.family }}"
+          --discovery discovery
+          --sample "${{ github.event.inputs.sample || '25' }}"
+          --out "out/pilot"
+          --run-id "${{ github.run_id }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: witness-pilot-${{ github.event.inputs.source }}
+          path: out/pilot
+          retention-days: 14

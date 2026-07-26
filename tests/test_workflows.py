@@ -78,3 +78,15 @@ def test_every_source_declares_discovery_probes() -> None:
     )
     for name, spec in catalog["sources"].items():
         assert spec.get("discovery_probes"), f"{name}: no discovery_probes declared"
+
+
+def test_pilot_workflow_samples_and_never_registers() -> None:
+    """A pilot proposes; it must not edit the catalog. Bulk authorisation is a human
+    decision made against the proposal, not something a workflow grants itself."""
+    text = (WORKFLOWS / "witness-pilot.yml").read_text(encoding="utf-8")
+    data = yaml.load(text, Loader=yaml.BaseLoader)
+    assert "workflow_dispatch" in data["on"]
+    assert "pytest" in text
+    assert "--sample" in text and "--family" in text
+    assert "upload-artifact@v4" in text and "retention-days: 14" in text
+    assert "source_catalog" not in text, "a pilot must never write the catalog"
