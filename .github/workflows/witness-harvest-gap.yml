@@ -1,0 +1,87 @@
+name: witness-harvest-gap
+
+# STAGE 3: harvest ONLY what we do not already hold.
+#
+# Every family below was proven by a pilot before landing here, and the page counts are
+# gaps measured against harvest/HOLDINGS.json -- not whole datasets. Re-fetching held
+# pages spends the politeness budget at small independent archives for nothing.
+#
+# WHY THIS EXISTS: the statscrew roster capture reported coverage_complete: true while
+# holding 1,085 of 2,416 team-seasons (45%). "Complete" meant every SHARD reported, not
+# every work item captured. This workflow harvests against the SEED INVENTORY as the
+# denominator, so a gap is visible as a gap.
+#
+# CONCURRENCY: max-parallel 15 across the whole matrix, deliberately spread over hosts
+# and datasets rather than 15 streams at one site. Per-host rate is the product of that
+# spread and the catalog's delay_seconds; raising shard counts for a single source
+# raises that site's request rate proportionally, so change them together.
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_pages:
+        description: Page cap per shard
+        default: "4000"
+      only_source:
+        description: Limit to one source (blank = all)
+        default: ""
+
+jobs:
+  harvest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      max-parallel: 15
+      matrix:
+        target:
+          # statscrew -- 5 shards: the roster GAP plus two pilot-proven stat families
+          - {source: statscrew, dataset: team_season_roster, shards: 5}
+          - {source: statscrew, dataset: team_season_stats, shards: 5}
+          - {source: statscrew, dataset: team_season_results, shards: 5}
+        shard: [0, 1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install --requirement requirements-harvest.txt
+      - run: python -m pytest tests -q
+      - name: Skip sources not selected
+        id: gate
+        run: |
+          want="${{ github.event.inputs.only_source }}"
+          if [ -n "$want" ] && [ "$want" != "${{ matrix.target.source }}" ]; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Census the gap (seed inventory minus holdings)
+        if: steps.gate.outputs.run == 'true'
+        run: >-
+          python -m harvest.census
+          --source "${{ matrix.target.source }}"
+          --dataset "${{ matrix.target.dataset }}"
+          --max-pages "${{ github.event.inputs.max_pages || '4000' }}"
+          --shard "${{ matrix.shard }}"
+          --num-shards "${{ matrix.target.shards }}"
+          --out "out/census-${{ matrix.target.dataset }}-${{ matrix.shard }}"
+          --run-id "${{ github.run_id }}"
+      - name: Harvest the gap
+        if: steps.gate.outputs.run == 'true'
+        run: >-
+          python -m harvest.runner
+          --source "${{ matrix.target.source }}"
+          --dataset "${{ matrix.target.dataset }}"
+          --work-items "out/census-${{ matrix.target.dataset }}-${{ matrix.shard }}/WORK_ITEMS.jsonl"
+          --shard "${{ matrix.shard }}"
+          --num-shards "${{ matrix.target.shards }}"
+          --work-items-prepartitioned
+          --run-id "${{ github.run_id }}"
+          --out "out/harvest-${{ matrix.target.dataset }}-${{ matrix.shard }}"
+      - uses: actions/upload-artifact@v4
+        if: steps.gate.outputs.run == 'true'
+        with:
+          name: witness-gap-${{ matrix.target.source }}-${{ matrix.target.dataset }}-${{ matrix.shard }}
+          path: out/harvest-${{ matrix.target.dataset }}-${{ matrix.shard }}
+          retention-days: 14

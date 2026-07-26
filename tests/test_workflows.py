@@ -99,3 +99,19 @@ def test_pilot_workflow_samples_and_never_registers() -> None:
     assert "--sample" in text and "--family" in text
     assert "upload-artifact@v4" in text and "retention-days: 14" in text
     assert "source_catalog" not in text, "a pilot must never write the catalog"
+
+
+def test_gap_harvest_is_manual_bounded_and_spread_across_hosts() -> None:
+    """Stage 3 harvests only measured GAPS, and its parallelism is spread across hosts
+    and datasets rather than pointed at one site. Per-host request rate is the product
+    of that spread and the catalog delay, so shard counts and politeness move together.
+    """
+    text = (WORKFLOWS / "witness-harvest-gap.yml").read_text(encoding="utf-8")
+    data = yaml.load(text, Loader=yaml.BaseLoader)
+    assert "workflow_dispatch" in data["on"]
+    assert "push" not in data["on"], "a bulk harvest must never fire from a code edit"
+    assert "pytest" in text
+    assert "max-parallel: 15" in text
+    assert "timeout-minutes:" in text
+    assert "--max-pages" in text and "--num-shards" in text
+    assert "upload-artifact@v4" in text and "retention-days: 14" in text

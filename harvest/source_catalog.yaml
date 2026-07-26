@@ -92,3 +92,22 @@ sources:
         first_year: 1920
         last_year: 2025
         allowed_prefixes: [/football/stats/]
+      # PILOT-PROVEN 2026-07-26 (5 pages, 6 table shapes, every shape carrying a player
+      # column and native p-{id} links). Chosen over player_season_stats for the stat
+      # content: 1,084 team-season pages cover the same player-seasons that 19,266
+      # player pages would, an 18x smaller crawl at the same site.
+      # MULTI-TABLE: rows must be table-tagged at capture or the six shapes collapse.
+      team_season_stats:
+        first_year: 1920
+        last_year: 2025
+        allowed_prefixes: [/football/stats/]
+        seed_inventory: team_seasons.csv
+        census_seed_template: https://www.statscrew.com/football/stats/t-{team}/y-{year}
+      # PILOT-PROVEN 2026-07-26 (1 structural shape, 14 rows: date/game/res/home/road/
+      # record, native ids on every row). Independent game calendar AND running record.
+      team_season_results:
+        first_year: 1920
+        last_year: 2025
+        allowed_prefixes: [/football/results/]
+        seed_inventory: team_seasons.csv
+        census_seed_template: https://www.statscrew.com/football/results/t-{team}/y-{year}
