@@ -27,9 +27,18 @@ def test_bulk_workflows_bound_parallelism_and_runtime() -> None:
         assert "max_pages" in text or "--max-pages" in text
 
 
-def test_all_source_census_runs_on_harvest_changes() -> None:
+def test_all_source_census_is_manual_not_push_triggered() -> None:
+    """A full re-census must be a DECISION, never a side effect of editing code.
+
+    This ran on every push touching harvest/**, so three unrelated commits in one
+    afternoon launched three 60-job runs that re-crawled datasets we already hold --
+    thousands of redundant requests at small independent archives.
+    """
     text = (WORKFLOWS / "witness-census-all.yml").read_text(encoding="utf-8")
-    assert "push:" in text
+    data = yaml.load(text, Loader=yaml.BaseLoader)
+    assert "workflow_dispatch" in data["on"]
+    assert "push" not in data["on"], (
+        "re-crawling held pages must not be triggered by a code edit")
     assert "nflcom" in text
     assert "statscrew" in text
     assert "profootballarchives" in text

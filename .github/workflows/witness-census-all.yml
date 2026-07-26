@@ -1,12 +1,16 @@
 name: witness-census-all
 
+# TRIGGER IS MANUAL ON PURPOSE (2026-07-26). This used to run on every push touching
+# harvest/**, which meant ANY edit to the harvest package -- including adding a new
+# module that this workflow does not even call -- launched 60 jobs that re-crawled the
+# three datasets we ALREADY HOLD. Three such runs fired from three unrelated commits in
+# a single afternoon: pure waste of Actions minutes, and worse, thousands of redundant
+# requests at small independent archives for pages already on disk.
+#
+# A full re-census is a DECISION (a source changed, or a capture is suspect), not a
+# side effect of editing code. Before dispatching, check harvest/HOLDINGS.json: if the
+# pages are already held, re-crawling them buys nothing.
 on:
-  push:
-    branches: [main]
-    paths:
-      - "harvest/**"
-      - "requirements-harvest.txt"
-      - ".github/workflows/witness-census-all.yml"
   workflow_dispatch:
 
 jobs:
