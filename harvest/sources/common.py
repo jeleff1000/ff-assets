@@ -13,7 +13,13 @@ class _TableParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__()
         self.tables: list[list[list[dict[str, str]]]] = []
+        # Cells emitted OUTSIDE any <tr>, per table. StatsCrew serves
+        # "<tbody><td>...</td><td>...</td>" with no row wrappers at all, so a parser
+        # that only opens a row on <tr> silently discards every data row and keeps the
+        # single well-formed Totals line. Browsers infer the rows; so must we.
+        self.orphans: list[list[dict[str, str]]] = []
         self._table: list[list[dict[str, str]]] | None = None
+        self._orphan: list[dict[str, str]] | None = None
         self._row: list[dict[str, str]] | None = None
         self._cell: dict[str, str] | None = None
 
@@ -21,9 +27,10 @@ class _TableParser(HTMLParser):
         tag = tag.lower()
         if tag == "table":
             self._table = []
+            self._orphan = []
         elif tag == "tr" and self._table is not None:
             self._row = []
-        elif tag in {"th", "td"} and self._row is not None:
+        elif tag in {"th", "td"} and (self._row is not None or self._table is not None):
             self._cell = {"text": "", "href": "", "kind": tag}
         elif tag == "a" and self._cell is not None:
             self._cell["href"] = next((value or "" for name, value in attrs if name.lower() == "href"), "")
@@ -34,9 +41,12 @@ class _TableParser(HTMLParser):
 
     def handle_endtag(self, tag: str) -> None:
         tag = tag.lower()
-        if tag in {"th", "td"} and self._cell is not None and self._row is not None:
+        if tag in {"th", "td"} and self._cell is not None:
             self._cell["text"] = " ".join(self._cell["text"].split())
-            self._row.append(self._cell)
+            if self._row is not None:
+                self._row.append(self._cell)
+            elif self._orphan is not None:
+                self._orphan.append(self._cell)
             self._cell = None
         elif tag == "tr" and self._row is not None and self._table is not None:
             if self._row:
@@ -45,14 +55,18 @@ class _TableParser(HTMLParser):
         elif tag == "table" and self._table is not None:
             if self._table:
                 self.tables.append(self._table)
+                self.orphans.append(self._orphan or [])
             self._table = None
+            self._orphan = None
 
 
 def parse_tables(html: str) -> list[list[dict[str, dict[str, str]]]]:
     parser = _TableParser()
     parser.feed(html)
     output = []
-    for table in parser.tables:
+    for table_index, table in enumerate(parser.tables):
+        orphan_cells = (parser.orphans[table_index]
+                        if table_index < len(parser.orphans) else [])
         header_index = next((i for i, row in enumerate(table) if any(cell["kind"] == "th" for cell in row)), None)
         if header_index is None:
             continue
@@ -62,6 +76,15 @@ def parse_tables(html: str) -> list[list[dict[str, dict[str, str]]]]:
             if len(cells) < len(headers):
                 continue
             rows.append({headers[i]: cells[i] for i in range(len(headers))})
+        # Recover rows the source never wrapped in <tr>: a flat run of cells segments
+        # into rows of header width, exactly as a browser lays them out. Only whole
+        # rows are emitted; a trailing partial run is dropped rather than padded, since
+        # inventing cells would be worse than reporting fewer rows.
+        if orphan_cells and headers:
+            width = len(headers)
+            for start in range(0, len(orphan_cells) - width + 1, width):
+                chunk = orphan_cells[start : start + width]
+                rows.append({headers[i]: chunk[i] for i in range(width)})
         if rows:
             output.append(rows)
     return output
