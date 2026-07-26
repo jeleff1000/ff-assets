@@ -286,14 +286,12 @@ def main() -> None:
             f"{args.source}: no discovery probes -- declare discovery_probes in the "
             "catalog or pass --probe"
         )
-    prefixes = tuple(
-        {
-            prefix
-            for dataset in spec.get("datasets", {}).values()
-            for prefix in dataset.get("allowed_prefixes", [])
-        }
-        or {"/"}
-    )
+    # Discovery scope is DELIBERATELY broader than the datasets' allowed_prefixes.
+    # Scoping discovery to what the datasets already claim means it can only ever
+    # re-confirm families we declared -- measured 2026-07-26, when the dataset allowlist
+    # silently filtered /football/results/ and /football/l-* out of a StatsCrew run and
+    # left discovery reporting 8 patterns for a site with far more.
+    prefixes = tuple(spec.get("discovery_prefixes") or ["/"])
     client = HttpClient(delay_seconds=float(spec.get("delay_seconds", 1.0)))
     summary = run_discovery(
         source=args.source,

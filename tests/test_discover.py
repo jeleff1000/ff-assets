@@ -67,3 +67,56 @@ def test_discovery_follows_one_hop_and_records_robots_denials(tmp_path):
     assert child["table_shapes"][0]["headers"] == ["date", "transaction"]
     assert (tmp_path / "ARTIFACT_MANIFEST.json").is_file()
     assert (tmp_path / "DISCOVERY_SUMMARY.json").is_file()
+
+
+def test_discovery_scope_is_broader_than_declared_datasets():
+    """Discovery scoped to the datasets' allowed_prefixes can only re-confirm what we
+    already declared. Measured 2026-07-26: the dataset allowlist filtered
+    /football/results/ and /football/l-* out of a StatsCrew discovery run, so the tool
+    reported 8 patterns for a site with many more. discovery_prefixes exists to break
+    that chicken-and-egg."""
+    import yaml
+    from pathlib import Path
+    catalog = yaml.safe_load(
+        (Path(__file__).parents[1] / "harvest" / "source_catalog.yaml").read_text(
+            encoding="utf-8"))
+    for name, spec in catalog["sources"].items():
+        scope = spec.get("discovery_prefixes")
+        assert scope, f"{name}: no discovery_prefixes -- discovery cannot find the unknown"
+        dataset_prefixes = {
+            p for ds in spec.get("datasets", {}).values()
+            for p in ds.get("allowed_prefixes", [])
+        }
+        assert not dataset_prefixes or set(scope) != dataset_prefixes or scope == ["/"], (
+            f"{name}: discovery scope equals the dataset allowlist, so it can only "
+            "confirm known families")
+
+
+def test_report_distinguishes_held_from_merely_declared(tmp_path):
+    """The two-state report was actively misleading: it counted a pattern as covered
+    whenever a DECLARED dataset claimed the prefix, so nflcom read "0 unclaimed" while
+    /players/{slug}/stats/* was attributed to player_game_stats -- declared and NEVER
+    RUN. A report claiming we hold pages we have never fetched is worse than none."""
+    from harvest.discover_report import build_report
+
+    summary = {
+        "source": "s",
+        "counters": {"url_patterns": 2, "patterns_with_tables": 2},
+        "patterns": [
+            {"url_pattern": "/a/{id}", "pages_seen": 1, "example_urls": ["u1"],
+             "n_distinct_table_shapes": 1,
+             "table_shapes": [{"max_rows": 5, "surface": "canonical_candidate"}]},
+            {"url_pattern": "/b/{id}", "pages_seen": 1, "example_urls": ["u2"],
+             "n_distinct_table_shapes": 1,
+             "table_shapes": [{"max_rows": 9, "surface": "canonical_candidate"}]},
+        ],
+    }
+    spec = {"datasets": {"ds": {"allowed_prefixes": ["/a", "/b"]}}}
+    report = build_report(summary, spec, {"s": {"/a/{id}": 120}})
+    states = {r["url_pattern"]: r["state"] for r in report["all_patterns"]}
+    assert states["/a/{id}"] == "HELD", "we fetched 120 of these -- do not re-fetch"
+    assert states["/b/{id}"] == "DECLARED_NOT_HELD", (
+        "declared by a dataset but never harvested -- this is the case the old report "
+        "silently reported as covered")
+    assert report["counters"]["patterns_worth_fetching"] == 1
+    assert [r["url_pattern"] for r in report["worth_fetching"]] == ["/b/{id}"]

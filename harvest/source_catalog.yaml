@@ -2,6 +2,7 @@ sources:
   nflcom:
     domains: [www.nfl.com]
     delay_seconds: 0.75
+    discovery_prefixes: ["/players", "/stats", "/teams", "/sitemap"]
     discovery_probes:
       - https://www.nfl.com/sitemap/html/rosters/1963/
       - https://www.nfl.com/players/steve-smith/stats/
@@ -21,6 +22,10 @@ sources:
   profootballarchives:
     domains: [www.profootballarchives.com, profootballarchives.com]
     delay_seconds: 1.0
+    # Discovery needs a BROADER scope than the datasets' allowed_prefixes, or it can
+    # only ever confirm families we already declared -- the chicken-and-egg that makes a
+    # discovery tool decorative. PFA is single-sport, so the whole host is in scope.
+    discovery_prefixes: ["/"]
     # Probes are the site's own nav AND footer. The footer entries are load-bearing:
     # super-bowl / trainingcamps / rosterlimits / officials / in-memoriam are reachable
     # only from there, so a nav-only probe set under-counts the site.
@@ -60,6 +65,11 @@ sources:
   statscrew:
     domains: [www.statscrew.com]
     delay_seconds: 1.0
+    # Broader than the dataset prefixes (/football/roster/, /football/stats/) so
+    # discovery can SEE families we have not declared -- e.g. /football/results/ and
+    # /football/l-*, which the dataset allowlist silently filtered out on the first run.
+    # Still bounded to /football/: StatsCrew is multi-sport and the rest is out of domain.
+    discovery_prefixes: ["/football"]
     # StatsCrew is a MULTI-SPORT host; probes stay inside /football/ so discovery
     # measures the NFL surface and never wanders into baseball or lacrosse.
     discovery_probes:
