@@ -120,17 +120,57 @@ def test_gap_harvest_is_manual_bounded_and_polite_PER_HOST() -> None:
     assert "timeout-minutes:" in text
     assert "--max-pages" in text and "--num-shards" in text
     assert "upload-artifact@v4" in text and "retention-days: 14" in text
+    # The matrix is COMPUTED, so the workflow must consume it rather than declare it --
+    # a literal matrix here would mean filtered dispatches create jobs that do nothing.
+    assert data["jobs"]["harvest"]["needs"] == "plan"
+    assert "fromJSON(needs.plan.outputs.matrix)" in text
 
-    strategy = data["jobs"]["harvest"]["strategy"]
-    cap = int(strategy["max-parallel"])
-    hosts = {target["source"] for target in strategy["matrix"]["target"]}
-    catalog = yaml.safe_load(
-        (Path(__file__).parents[1] / "harvest" / "source_catalog.yaml").read_text(encoding="utf-8")
+    from harvest.plan_matrix import max_parallel_for, plan
+
+    catalog_path = Path(__file__).parents[1] / "harvest" / "source_catalog.yaml"
+    catalog = yaml.safe_load(catalog_path.read_text(encoding="utf-8"))
+    matrix = plan()
+    cap = max_parallel_for(matrix, catalog_path)
+    hosts = {job["source"] for job in matrix["include"]}
+    # Worst case every running job sits on the same host, because a dispatch can be
+    # filtered to one source -- so the fastest delay sets the rate, never an average.
+    fastest = min(float(catalog["sources"][host]["delay_seconds"]) for host in hosts)
+    assert cap / fastest <= 4.0, (
+        f"max-parallel {cap} over {sorted(hosts)} at {fastest}s delay is "
+        f"{cap / fastest:.0f} req/s against a single host"
     )
-    slowest = min(float(catalog["sources"][host]["delay_seconds"]) for host in hosts)
-    # Worst case every running job sits on the same host, because the matrix may be
-    # filtered to one source at dispatch time.
-    assert cap / slowest <= 6.0, (
-        f"max-parallel {cap} over {sorted(hosts)} at {slowest}s delay is "
-        f"{cap / slowest:.0f} req/s against a single host"
+
+
+def test_a_filtered_dispatch_creates_only_the_jobs_it_asked_for() -> None:
+    """Retrying one blocked shard must not spin up fourteen runners to do nothing.
+
+    The in-job filter it replaces was CORRECT about traffic -- the skipped jobs made zero
+    HTTP requests -- but each still checked out, pip-installed and ran the suite before
+    exiting, and a one-shard retry was indistinguishable from a full harvest in the run
+    list.
+    """
+    from harvest.plan_matrix import plan
+
+    assert len(plan()["include"]) == 15
+    one = plan(only_source="statscrew", only_dataset="team_season_stats", only_shard="1")
+    assert one["include"] == [
+        {"source": "statscrew", "dataset": "team_season_stats", "shards": 5, "shard": 1}
+    ]
+    dataset_only = plan(only_dataset="team_season_results")
+    assert len(dataset_only["include"]) == 5
+    assert {job["dataset"] for job in dataset_only["include"]} == {"team_season_results"}
+
+
+def test_a_filter_that_selects_nothing_fails_loudly() -> None:
+    """A typo in a dispatch input must not present as a successful no-op run."""
+    import subprocess
+    import sys
+
+    result = subprocess.run(
+        [sys.executable, "-m", "harvest.plan_matrix", "--only-dataset", "does_not_exist"],
+        cwd=Path(__file__).parents[1],
+        capture_output=True,
+        text=True,
     )
+    assert result.returncode != 0
+    assert "NO jobs" in result.stderr

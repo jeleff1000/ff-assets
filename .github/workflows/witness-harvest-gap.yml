@@ -42,21 +42,17 @@ on:
         default: ""
 
 jobs:
-  harvest:
+  # WHICH JOBS EXIST is decided here, before any of them are created. Filtering INSIDE
+  # the jobs also worked -- a shard-1 retry made zero requests anywhere else -- but
+  # GitHub still created all fifteen, and each checked out, pip-installed and ran pytest
+  # before finding it had nothing to do. Retrying one shard spun up fourteen runners to
+  # do nothing, which in the run list is indistinguishable from re-running everything.
+  plan:
     runs-on: ubuntu-latest
-    timeout-minutes: 350
-    strategy:
-      fail-fast: false
-      # 5 concurrent jobs at statscrew.com == 5 req/s at delay_seconds 1.0. See the
-      # per-host note above before raising this.
-      max-parallel: 5
-      matrix:
-        target:
-          # statscrew -- 5 shards: the roster GAP plus two pilot-proven stat families
-          - {source: statscrew, dataset: team_season_roster, shards: 5}
-          - {source: statscrew, dataset: team_season_stats, shards: 5}
-          - {source: statscrew, dataset: team_season_results, shards: 5}
-        shard: [0, 1, 2, 3, 4]
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.build.outputs.matrix }}
+      max_parallel: ${{ steps.build.outputs.max_parallel }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -64,43 +60,53 @@ jobs:
           python-version: "3.12"
       - run: pip install --requirement requirements-harvest.txt
       - run: python -m pytest tests -q
-      - name: Skip sources not selected
-        id: gate
-        run: |
-          want="${{ github.event.inputs.only_source }}"
-          want_dataset="${{ github.event.inputs.only_dataset }}"
-          run=true
-          if [ -n "$want" ] && [ "$want" != "${{ matrix.target.source }}" ]; then run=false; fi
-          if [ -n "$want_dataset" ] && [ "$want_dataset" != "${{ matrix.target.dataset }}" ]; then run=false; fi
-          want_shard="${{ github.event.inputs.only_shard }}"
-          if [ -n "$want_shard" ] && [ "$want_shard" != "${{ matrix.shard }}" ]; then run=false; fi
-          echo "run=$run" >> "$GITHUB_OUTPUT"
+      - name: Plan the matrix
+        id: build
+        run: >-
+          python -m harvest.plan_matrix
+          --only-source "${{ github.event.inputs.only_source }}"
+          --only-dataset "${{ github.event.inputs.only_dataset }}"
+          --only-shard "${{ github.event.inputs.only_shard }}"
+
+  harvest:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      # DERIVED from the planned jobs and the catalog delay, not asserted independently
+      # of them: N concurrent jobs at one host send N/delay_seconds requests per second.
+      max-parallel: ${{ fromJSON(needs.plan.outputs.max_parallel) }}
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install --requirement requirements-harvest.txt
       - name: Census the gap (seed inventory minus holdings)
-        if: steps.gate.outputs.run == 'true'
         run: >-
           python -m harvest.census
-          --source "${{ matrix.target.source }}"
-          --dataset "${{ matrix.target.dataset }}"
+          --source "${{ matrix.source }}"
+          --dataset "${{ matrix.dataset }}"
           --max-pages "${{ github.event.inputs.max_pages || '4000' }}"
           --shard "${{ matrix.shard }}"
-          --num-shards "${{ matrix.target.shards }}"
-          --out "out/census-${{ matrix.target.dataset }}-${{ matrix.shard }}"
+          --num-shards "${{ matrix.shards }}"
+          --out "out/census-${{ matrix.dataset }}-${{ matrix.shard }}"
           --run-id "${{ github.run_id }}"
       - name: Harvest the gap
-        if: steps.gate.outputs.run == 'true'
         run: >-
           python -m harvest.runner
-          --source "${{ matrix.target.source }}"
-          --dataset "${{ matrix.target.dataset }}"
-          --work-items "out/census-${{ matrix.target.dataset }}-${{ matrix.shard }}/WORK_ITEMS.jsonl"
+          --source "${{ matrix.source }}"
+          --dataset "${{ matrix.dataset }}"
+          --work-items "out/census-${{ matrix.dataset }}-${{ matrix.shard }}/WORK_ITEMS.jsonl"
           --shard "${{ matrix.shard }}"
-          --num-shards "${{ matrix.target.shards }}"
+          --num-shards "${{ matrix.shards }}"
           --work-items-prepartitioned
           --run-id "${{ github.run_id }}"
-          --out "out/harvest-${{ matrix.target.dataset }}-${{ matrix.shard }}"
+          --out "out/harvest-${{ matrix.dataset }}-${{ matrix.shard }}"
       - uses: actions/upload-artifact@v4
-        if: steps.gate.outputs.run == 'true'
         with:
-          name: witness-gap-${{ matrix.target.source }}-${{ matrix.target.dataset }}-${{ matrix.shard }}
-          path: out/harvest-${{ matrix.target.dataset }}-${{ matrix.shard }}
+          name: witness-gap-${{ matrix.source }}-${{ matrix.dataset }}-${{ matrix.shard }}
+          path: out/harvest-${{ matrix.dataset }}-${{ matrix.shard }}
           retention-days: 14
