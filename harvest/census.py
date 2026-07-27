@@ -98,6 +98,38 @@ def crawl_fixture(
     return sorted(rows, key=lambda row: row["url"])
 
 
+def read_robots(robots_url: str, fetch) -> urllib.robotparser.RobotFileParser:
+    """Fetch robots.txt through OUR client, not through urllib's own opener.
+
+    `RobotFileParser.read()` opens the URL itself: no User-Agent, no rate pacing, no
+    retry. And urllib's contract is that a 401/403 on robots.txt means DISALLOW
+    EVERYTHING -- so one throttled response turns a whole shard into 452 "robots_denied"
+    entries in under a second, which is exactly what happened to shard 1 of ff-assets runs
+    30226751762 and 30232968983. Five jobs starting together fetch five robots.txt within
+    the same instant, which is the one burst our per-host pacing never covered, because
+    the pacing lives in the client this call bypassed.
+
+    Going through `fetch` gives it the real User-Agent, the catalog delay and the client's
+    retry/backoff. A genuine, repeated 401/403 still disallows -- politeness is not
+    negotiable -- but a transient one no longer silently cancels a shard.
+    """
+    parser = urllib.robotparser.RobotFileParser(robots_url)
+    parser.parse([])
+    try:
+        response = fetch(robots_url)
+    except Exception:  # a robots fetch must never take the run down with it
+        parser.allow_all = True
+        return parser
+    if response.status == "ok":
+        parser.parse(response.body.decode("utf-8", errors="replace").splitlines())
+    elif response.status_code in {401, 403}:
+        parser.disallow_all = True
+    else:
+        # 404 / 5xx / network: urllib's own rule is that an absent robots.txt allows all.
+        parser.allow_all = True
+    return parser
+
+
 def _discover_links(url: str, body: str) -> list[str]:
     if body.lstrip().startswith("<?xml") or "<urlset" in body or "<sitemapindex" in body:
         return sorted(set(re.findall(r"<loc>\s*(.*?)\s*</loc>", body, flags=re.I | re.S)))
@@ -157,11 +189,7 @@ def run_census(
         if obey_robots:
             robot = robots.get(parsed.netloc)
             if robot is None:
-                robot = urllib.robotparser.RobotFileParser(f"{parsed.scheme}://{parsed.netloc}/robots.txt")
-                try:
-                    robot.read()
-                except OSError:
-                    pass
+                robot = read_robots(f"{parsed.scheme}://{parsed.netloc}/robots.txt", fetch)
                 robots[parsed.netloc] = robot
             if not robot.can_fetch("ff-assets-historical-witness", url):
                 ledger.append({"url": url, "status": "robots_denied"})

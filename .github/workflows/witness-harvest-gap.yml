@@ -36,6 +36,10 @@ on:
       only_dataset:
         description: Limit to one dataset (blank = all)
         default: ""
+      only_shard:
+        description: Limit to one shard (blank = all) -- retry a blocked shard without
+          re-crawling the ones that succeeded
+        default: ""
 
 jobs:
   harvest:
@@ -68,6 +72,8 @@ jobs:
           run=true
           if [ -n "$want" ] && [ "$want" != "${{ matrix.target.source }}" ]; then run=false; fi
           if [ -n "$want_dataset" ] && [ "$want_dataset" != "${{ matrix.target.dataset }}" ]; then run=false; fi
+          want_shard="${{ github.event.inputs.only_shard }}"
+          if [ -n "$want_shard" ] && [ "$want_shard" != "${{ matrix.shard }}" ]; then run=false; fi
           echo "run=$run" >> "$GITHUB_OUTPUT"
       - name: Census the gap (seed inventory minus holdings)
         if: steps.gate.outputs.run == 'true'
