@@ -40,6 +40,15 @@ on:
         description: Limit to one shard (blank = all) -- retry a blocked shard without
           re-crawling the ones that succeeded
         default: ""
+      shards:
+        description: Partition count (blank = catalog default). Smaller slices shrink the
+          blast radius of a wedged shard; this does NOT raise the per-host request rate,
+          which max-parallel sets independently.
+        default: ""
+      budget_minutes:
+        description: Wall-clock budget per shard. A wedged shard FAILS at this point
+          instead of burning the 350-minute job timeout and being cancelled.
+        default: "90"
 
 jobs:
   # WHICH JOBS EXIST is decided here, before any of them are created. Filtering INSIDE
@@ -67,6 +76,7 @@ jobs:
           --only-source "${{ github.event.inputs.only_source }}"
           --only-dataset "${{ github.event.inputs.only_dataset }}"
           --only-shard "${{ github.event.inputs.only_shard }}"
+          --shards "${{ github.event.inputs.shards }}"
 
   harvest:
     needs: plan
@@ -93,6 +103,7 @@ jobs:
           --shard "${{ matrix.shard }}"
           --num-shards "${{ matrix.shards }}"
           --out "out/census-${{ matrix.dataset }}-${{ matrix.shard }}"
+          --budget-minutes "${{ github.event.inputs.budget_minutes || '90' }}"
           --run-id "${{ github.run_id }}"
       - name: Harvest the gap
         run: >-
@@ -103,6 +114,7 @@ jobs:
           --shard "${{ matrix.shard }}"
           --num-shards "${{ matrix.shards }}"
           --work-items-prepartitioned
+          --budget-minutes "${{ github.event.inputs.budget_minutes || '90' }}"
           --run-id "${{ github.run_id }}"
           --out "out/harvest-${{ matrix.dataset }}-${{ matrix.shard }}"
       - uses: actions/upload-artifact@v4

@@ -161,13 +161,18 @@ def main() -> None:
         action="store_true",
         help="Process every supplied work item because census already assigned this branch to the shard",
     )
+    parser.add_argument(
+        "--budget-minutes", type=float, default=90.0,
+        help="wall-clock budget for this shard; it FAILS when exceeded instead of "
+             "burning the job timeout and being cancelled")
     parser.add_argument("--catalog", type=Path, default=Path("harvest/source_catalog.yaml"))
     args = parser.parse_args()
     catalog = load_catalog(args.catalog)
     source_spec = catalog.source(args.source)
     catalog.dataset(args.source, args.dataset)
     work_items = [json.loads(line) for line in args.work_items.read_text(encoding="utf-8").splitlines() if line]
-    client = HttpClient(delay_seconds=float(source_spec["delay_seconds"]))
+    client = HttpClient(delay_seconds=float(source_spec["delay_seconds"]),
+                        budget_seconds=args.budget_minutes * 60.0)
     result = run_harvest(
         source=args.source,
         dataset=args.dataset,

@@ -329,6 +329,10 @@ def main() -> None:
     parser.add_argument("--shard", type=int, default=0)
     parser.add_argument("--num-shards", type=int, default=1)
     parser.add_argument("--run-id", default=os.environ.get("GITHUB_RUN_ID", "local"))
+    parser.add_argument(
+        "--budget-minutes", type=float, default=90.0,
+        help="wall-clock budget for this shard; it FAILS when exceeded instead of "
+             "burning the job timeout and being cancelled")
     parser.add_argument("--catalog", type=Path, default=Path("harvest/source_catalog.yaml"))
     parser.add_argument("--year-start", type=int)
     parser.add_argument("--year-end", type=int)
@@ -344,7 +348,8 @@ def main() -> None:
     )
     if not seeds:
         raise SystemExit("at least one --seed or catalog census_seed is required")
-    client = HttpClient(delay_seconds=float(source_spec["delay_seconds"]))
+    client = HttpClient(delay_seconds=float(source_spec["delay_seconds"]),
+                        budget_seconds=args.budget_minutes * 60.0)
     result = run_census(
         source=args.source,
         dataset=args.dataset,

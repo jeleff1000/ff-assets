@@ -33,11 +33,38 @@ class Response:
     error: str | None = None
 
 
+class BudgetExhausted(RuntimeError):
+    """The shard spent its wall-clock budget. Raised so the job FAILS rather than being
+    cancelled by the runner hours later."""
+
+
 class HttpClient:
-    def __init__(self, *, delay_seconds: float, retries: int = 3) -> None:
+    def __init__(
+        self, *, delay_seconds: float, retries: int = 3, budget_seconds: float | None = None
+    ) -> None:
         self.delay_seconds = delay_seconds
         self.retries = retries
+        # WALL-CLOCK BUDGET. Retries escalate (30/60/90s on throttle) and nothing bounded
+        # the total, so a shard that hit sustained network trouble consumed its entire
+        # 350-minute job timeout and was then CANCELLED -- which is not a failure, so it
+        # did not even trip the zero-record gate cleanly. Measured 2026-07-27:
+        # team_season_results shard 0 ran 5h50m on a 504-seed partition while its
+        # siblings did 468-489 seeds in ~17 MINUTES each. Not a size problem -- 3% more
+        # work, 20x the time -- so re-slicing would not have helped; only a budget does.
+        self.budget_seconds = budget_seconds
+        self._started = time.monotonic()
         self._last_request = 0.0
+
+    def _check_budget(self) -> None:
+        if self.budget_seconds is None:
+            return
+        spent = time.monotonic() - self._started
+        if spent > self.budget_seconds:
+            raise BudgetExhausted(
+                f"wall-clock budget exhausted after {spent / 60:.1f} min "
+                f"(limit {self.budget_seconds / 60:.0f} min) -- the host is not serving "
+                "this runner at a usable rate; fail now rather than burning the job timeout"
+            )
 
     def _pace(self) -> None:
         remaining = self.delay_seconds - (time.monotonic() - self._last_request)
@@ -45,6 +72,7 @@ class HttpClient:
             time.sleep(remaining)
 
     def fetch(self, url: str) -> Response:
+        self._check_budget()
         for attempt in range(self.retries):
             self._pace()
             request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})

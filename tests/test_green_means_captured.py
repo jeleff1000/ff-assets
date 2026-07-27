@@ -130,3 +130,41 @@ def test_a_real_403_still_disallows_because_politeness_is_not_negotiable() -> No
         lambda url: Response(url, 403, "blocked", b"", ""),
     )
     assert not parser.can_fetch("ff-assets-historical-witness", "https://example.com/x")
+
+
+def test_a_wedged_shard_fails_fast_instead_of_burning_the_job_timeout() -> None:
+    """MEASURED 2026-07-27: team_season_results shard 0 ran 5h50m on a 504-seed partition
+    and was CANCELLED at the job limit, while its siblings did 468-489 seeds in ~17
+    MINUTES each. Three percent more work, twenty times the time -- so it was never a size
+    problem and re-slicing would not have fixed it. Retries escalate (30/60/90s) and
+    nothing bounded the total. Cancelled is not failed, so it did not even trip the
+    zero-record gate cleanly.
+    """
+    import time
+
+    from harvest.http import BudgetExhausted, HttpClient
+
+    client = HttpClient(delay_seconds=0.0, budget_seconds=0.05)
+    time.sleep(0.06)
+    try:
+        client.fetch("https://example.com/anything")
+    except BudgetExhausted as exc:
+        assert "budget exhausted" in str(exc)
+    else:
+        raise AssertionError("a shard past its budget must raise, not keep retrying")
+
+
+def test_slice_size_and_request_rate_are_independent_knobs() -> None:
+    """The fix for a wedged shard is a budget; the fix for its BLAST RADIUS is smaller
+    slices. Conflating the two is how "15 runners" becomes 15 req/s at a small independent
+    archive -- which is the thing that got us blocked twice."""
+    from pathlib import Path
+
+    from harvest.plan_matrix import max_parallel_for, plan
+
+    catalog = Path(__file__).parents[1] / "harvest" / "source_catalog.yaml"
+    fine = plan(only_dataset="team_season_results", shards="15")
+    assert len(fine["include"]) == 15
+    assert max_parallel_for(fine, catalog) == max_parallel_for(
+        plan(only_dataset="team_season_results"), catalog
+    ), "raising the shard count must not raise the per-host rate"

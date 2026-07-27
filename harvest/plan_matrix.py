@@ -25,8 +25,9 @@ from pathlib import Path
 
 import yaml
 
-# The gap harvest's targets. `shards` is both the partition count and the number of jobs
-# this dataset contributes, so raising it raises the request rate at that host.
+# The gap harvest's targets. `shards` is the DEFAULT partition count; a dispatch may
+# override it. It does NOT set the request rate -- `max_parallel_for` does -- so slices can
+# be made smaller without touching politeness.
 TARGETS = (
     {"source": "statscrew", "dataset": "team_season_roster", "shards": 5},
     {"source": "statscrew", "dataset": "team_season_stats", "shards": 5},
@@ -45,10 +46,21 @@ MAX_REQUESTS_PER_SECOND_PER_HOST = 4.0
 
 
 def plan(
-    *, only_source: str = "", only_dataset: str = "", only_shard: str = ""
+    *, only_source: str = "", only_dataset: str = "", only_shard: str = "",
+    shards: str = "",
 ) -> dict[str, list]:
+    """SHARD COUNT AND CONCURRENCY ARE INDEPENDENT.
+
+    Raising the shard count makes each slice smaller, so a wedged shard costs 1/N of the
+    partition instead of 1/5 and is cheap to re-dispatch. It does NOT raise the request
+    rate at the host -- that is set by `max_parallel_for` -- and conflating the two is how
+    a "15 runners" plan becomes 15 req/s at a small independent archive.
+    """
     include = []
     for target in TARGETS:
+        target = dict(target)
+        if shards:
+            target["shards"] = int(shards)
         if only_source and only_source != target["source"]:
             continue
         if only_dataset and only_dataset != target["dataset"]:
@@ -88,12 +100,17 @@ def main() -> int:
     parser.add_argument("--only-source", default="")
     parser.add_argument("--only-dataset", default="")
     parser.add_argument("--only-shard", default="")
+    parser.add_argument("--shards", default="",
+                        help="override the partition count; smaller slices "
+                             "shrink the blast radius of a wedged shard and do "
+                             "NOT raise the per-host request rate")
     parser.add_argument("--catalog", type=Path, default=Path("harvest/source_catalog.yaml"))
     args = parser.parse_args()
     matrix = plan(
         only_source=args.only_source,
         only_dataset=args.only_dataset,
         only_shard=args.only_shard,
+        shards=args.shards,
     )
     if not matrix["include"]:
         raise SystemExit(
