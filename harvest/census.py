@@ -239,6 +239,9 @@ def run_census(
         "".join(json.dumps(row, sort_keys=True) + "\n" for row in sorted(work_items, key=lambda row: row["key"])),
         encoding="utf-8",
     )
+    status_counts: dict[str, int] = {}
+    for row in ledger:
+        status_counts[row["status"]] = status_counts.get(row["status"], 0) + 1
     report = {
         "source": source,
         "dataset": dataset,
@@ -246,6 +249,7 @@ def run_census(
         "requests": len(ledger),
         "surfaces": len(surfaces),
         "work_items": len(work_items),
+        "request_status": status_counts,
         "usability": {kind: sum(row["usability"] == kind for row in surfaces) for kind in sorted({r["usability"] for r in surfaces})},
     }
     (output_dir / "WITNESS_USABILITY_REPORT.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
@@ -259,6 +263,32 @@ def run_census(
     )
     (output_dir / "ARTIFACT_MANIFEST.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     return report
+
+
+def census_failure_reason(report: dict, *, source: str, dataset: str, shard: int) -> str | None:
+    """A CENSUS THAT EMITTED NO WORK MUST FAIL, NOT EXIT 0.
+
+    In run 30226751762 the `team_season_roster` shard 1 job logged 477 requests, 0
+    surfaces and 0 work items in 0.65 SECONDS, then reported green. Its 477 seeds were a
+    real partition: 178 team-seasons in it are still uncaptured today. The only ledger
+    path that records a request without calling `fetch()` is `robots_denied`, and the
+    client paces every real fetch, so 477 entries in under a second is proof the host
+    refused robots.txt to that runner while 15 jobs hit one site at once. A run that was
+    BLOCKED must never be indistinguishable from a run that legitimately found nothing.
+    """
+    statuses = report.get("request_status", {})
+    denied = statuses.get("robots_denied", 0)
+    if denied and denied == report["requests"]:
+        return (
+            f"{source}/{dataset} shard {shard}: every one of {denied} URLs was robots-denied "
+            "-- treat this as a block, not as an empty census"
+        )
+    if report["requests"] and not report["work_items"]:
+        return (
+            f"{source}/{dataset} shard {shard}: {report['requests']} requests produced ZERO "
+            f"work items (statuses: {statuses}) -- a shard with seeds must emit work"
+        )
+    return None
 
 
 def main() -> None:
@@ -301,6 +331,11 @@ def main() -> None:
         artifact_run_id=args.run_id,
     )
     print(json.dumps(result, indent=2))
+    reason = census_failure_reason(
+        result, source=args.source, dataset=args.dataset, shard=args.shard
+    )
+    if reason:
+        raise SystemExit(reason)
 
 
 if __name__ == "__main__":

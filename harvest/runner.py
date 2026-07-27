@@ -40,6 +40,8 @@ def run_harvest(
     raw_dir.mkdir(exist_ok=True)
     records: list[dict] = []
     ledger: list[dict] = []
+    columns: dict[tuple, dict] = {}
+    describe_columns = getattr(adapter, "column_dictionary", None)
     for work in sorted(work_items, key=lambda item: item["key"]):
         if not work_items_prepartitioned and shard_for(work["key"], shard_count) != shard_id:
             continue
@@ -65,6 +67,17 @@ def run_harvest(
             ledger_row["content_sha256"] = content_hash
             ledger.append(ledger_row)
             continue
+        if describe_columns is not None:
+            for entry in describe_columns(
+                dataset, response.body.decode("utf-8", errors="replace"), work
+            ):
+                key = (entry["table_tag"], entry["column_key"], entry.get("source_title"))
+                seen = columns.get(key)
+                if seen is None:
+                    entry["pages_observed"] = 1
+                    columns[key] = entry
+                else:
+                    seen["pages_observed"] += 1
         retrieved = datetime.now(timezone.utc).isoformat()
         for row in parsed:
             row.update(
@@ -80,6 +93,11 @@ def run_harvest(
     if records:
         pd.DataFrame(records).to_parquet(output_dir / "records.parquet", index=False)
     _write_jsonl(output_dir / "REQUEST_LEDGER.jsonl", ledger)
+    if columns:
+        _write_jsonl(
+            output_dir / "COLUMN_DICTIONARY.jsonl",
+            sorted(columns.values(), key=lambda row: (row["table_tag"], row["column_position"])),
+        )
     manifest = build_manifest(
         output_dir,
         source=source,
@@ -89,7 +107,35 @@ def run_harvest(
         artifact_run_id=artifact_run_id,
     )
     (output_dir / "ARTIFACT_MANIFEST.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-    return {"record_count": len(records), "request_count": len(ledger), "manifest": manifest}
+    return {
+        "record_count": len(records),
+        "request_count": len(ledger),
+        "work_item_count": len(work_items),
+        "column_count": len(columns),
+        "manifest": manifest,
+    }
+
+
+def harvest_failure_reason(result: dict, *, source: str, dataset: str, shard: int) -> str | None:
+    """A HARVEST THAT CAPTURED NOTHING MUST FAIL, NOT EXIT 0.
+
+    Run 30226751762 reported 15 green jobs. Ten of them -- `team_season_stats` and
+    `team_season_results`, about ten machine-hours -- had written a 0-byte ledger and no
+    records at all, because both datasets were declared in the catalog with no parser
+    branch behind them. Green meant "the process did not raise", which is not the claim
+    anyone reading a workflow badge makes. Exit status now carries the claim.
+    """
+    if not result["work_item_count"]:
+        return (
+            f"no work items for {source}/{dataset} shard {shard}: the census emitted an "
+            "empty partition, which is a census failure, not an empty harvest"
+        )
+    if not result["record_count"]:
+        return (
+            f"{source}/{dataset} shard {shard}: {result['work_item_count']} work items "
+            "produced ZERO records -- check that this dataset has a parser branch"
+        )
+    return None
 
 
 def run_fixture_harvest(*, pages: dict[str, str], **kwargs) -> dict:
@@ -134,6 +180,11 @@ def main() -> None:
         work_items_prepartitioned=args.work_items_prepartitioned,
     )
     print(json.dumps(result, indent=2))
+    reason = harvest_failure_reason(
+        result, source=args.source, dataset=args.dataset, shard=args.shard
+    )
+    if reason:
+        raise SystemExit(reason)
 
 
 if __name__ == "__main__":

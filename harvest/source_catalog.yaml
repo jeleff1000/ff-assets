@@ -11,14 +11,26 @@ sources:
         first_year: 1920
         last_year: 2025
         allowed_prefixes: [/sitemap/html/rosters/]
+        parser_probe: https://www.nfl.com/sitemap/html/rosters/1963/dayton-triangles
         census_seed_ranges:
           - first_year: 1920
             last_year: 2025
             template: https://www.nfl.com/sitemap/html/rosters/{year}/
+      # DECLARED, AND MUST NEVER BE CRAWLED. Discovery measured 27 of 27 URL patterns
+      # already HELD and worth_fetching = 0: these pages are on disk in the 47,060-page
+      # cache under raw/nflcom/cache, and O.9.0 resolved their column semantics from
+      # those retained bytes. Earlier plans called this a declared-but-unrun dataset
+      # worth harvesting; that would have been ~20,000 pointless fetches at nfl.com.
+      # Kept declared rather than deleted so the ledger still shows the family and the
+      # reason it is closed.
       player_game_stats:
         first_year: 1920
         last_year: 2025
         allowed_prefixes: [/players/]
+        harvest_disposition: held_elsewhere
+        disposition_reason: >-
+          27 of 27 discovery patterns HELD, worth_fetching = 0; the pages are retained
+          in raw/nflcom/cache (47,060 pages) and were re-parsed by O.9.0 without a fetch.
   profootballarchives:
     domains: [www.profootballarchives.com, profootballarchives.com]
     delay_seconds: 1.0
@@ -47,14 +59,24 @@ sources:
       - https://www.profootballarchives.com/officials.html
       - https://www.profootballarchives.com/nfl.html
     datasets:
+      # DECLARED, NEVER RUN, AND NOT DISPATCHABLE. Finding 9's third never-harvested
+      # dataset: there is no parser branch and no pilot for PFA team roster pages, so a
+      # dispatch would crawl for work items that can never be emitted. Carries no census
+      # seeds for exactly that reason. Counted, not excused -- the yahoo_oauth scoreboard
+      # reports harvest_datasets_queued_without_parser.
       team_season_roster:
         first_year: 1919
         last_year: 2025
         allowed_prefixes: [/]
+        harvest_disposition: queued_no_parser
+        disposition_reason: >-
+          No parser branch and no pilot for PFA team roster pages. Sequenced behind the
+          PFA boxscore re-parse (Phase 0b), which needs no crawl at all.
       player_game_participation:
         first_year: 1919
         last_year: 2025
         allowed_prefixes: [/nflboxscores]
+        parser_probe: https://www.profootballarchives.com/nflboxscores1/1921apfa035.html
         census_seed_ranges:
           - first_year: 1919
             last_year: 1921
@@ -86,28 +108,41 @@ sources:
         first_year: 1920
         last_year: 2025
         allowed_prefixes: [/football/roster/]
+        parser_probe: https://www.statscrew.com/football/roster/t-CLE/y-1963
         seed_inventory: team_seasons.csv
         census_seed_template: https://www.statscrew.com/football/roster/t-{team}/y-{year}
+      # DECLARED BUT UNSCHEDULED, deliberately: 1,084 team-season pages cover the same
+      # player-seasons as 19,266 player pages (18x). It has a parser and a probe so it
+      # is dispatchable the day that changes -- unscheduled is a decision, not a hole.
       player_season_stats:
         first_year: 1920
         last_year: 2025
         allowed_prefixes: [/football/stats/]
+        parser_probe: https://www.statscrew.com/football/stats/p-brownjim001
+        multi_table: true
       # PILOT-PROVEN 2026-07-26 (5 pages, 6 table shapes, every shape carrying a player
       # column and native p-{id} links). Chosen over player_season_stats for the stat
       # content: 1,084 team-season pages cover the same player-seasons that 19,266
       # player pages would, an 18x smaller crawl at the same site.
-      # MULTI-TABLE: rows must be table-tagged at capture or the six shapes collapse.
+      # MULTI-TABLE: rows must be table-tagged at capture or the ten tables collapse --
+      # five of them share the header set `avg long no player tds yds`, so the caption
+      # is the only thing that tells rushing from receiving from returns.
       team_season_stats:
         first_year: 1920
         last_year: 2025
         allowed_prefixes: [/football/stats/]
+        parser_probe: https://www.statscrew.com/football/stats/t-CLE/y-1963
+        multi_table: true
         seed_inventory: team_seasons.csv
         census_seed_template: https://www.statscrew.com/football/stats/t-{team}/y-{year}
       # PILOT-PROVEN 2026-07-26 (1 structural shape, 14 rows: date/game/res/home/road/
-      # record, native ids on every row). Independent game calendar AND running record.
+      # record, native ids on every row). Independent game calendar AND running record,
+      # and the only StatsCrew family that publishes a season type (tr class=reg_season
+      # / post_season).
       team_season_results:
         first_year: 1920
         last_year: 2025
         allowed_prefixes: [/football/results/]
+        parser_probe: https://www.statscrew.com/football/results/t-CLE/y-1963
         seed_inventory: team_seasons.csv
         census_seed_template: https://www.statscrew.com/football/results/t-{team}/y-{year}

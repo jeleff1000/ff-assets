@@ -11,10 +11,18 @@ name: witness-harvest-gap
 # every work item captured. This workflow harvests against the SEED INVENTORY as the
 # denominator, so a gap is visible as a gap.
 #
-# CONCURRENCY: max-parallel 15 across the whole matrix, deliberately spread over hosts
-# and datasets rather than 15 streams at one site. Per-host rate is the product of that
-# spread and the catalog's delay_seconds; raising shard counts for a single source
-# raises that site's request rate proportionally, so change them together.
+# CONCURRENCY: bounded PER HOST, not per matrix. The first run of this workflow set
+# max-parallel 15 while every one of its 15 jobs targeted statscrew.com, so the intended
+# "spread across hosts" was 15 concurrent streams at one small independent archive. The
+# site refused robots.txt to one runner, and that shard recorded 477 robots-denied URLs
+# in 0.65s and reported green -- 178 team-seasons of its partition are still uncaptured.
+#
+# Per-host request rate is (concurrent jobs at that host) / delay_seconds. With
+# statscrew at 1.0s, max-parallel 5 is 5 req/s; 15 was 15 req/s sustained for an hour.
+# The gain does not justify it: StatsCrew is a candidate-independent root and the only
+# pre-1994 tackle source we have found, so being blocked costs the whole capture.
+# If this matrix ever spans several hosts again, raise the cap alongside that spread --
+# never on its own.
 
 on:
   workflow_dispatch:
@@ -25,6 +33,9 @@ on:
       only_source:
         description: Limit to one source (blank = all)
         default: ""
+      only_dataset:
+        description: Limit to one dataset (blank = all)
+        default: ""
 
 jobs:
   harvest:
@@ -32,7 +43,9 @@ jobs:
     timeout-minutes: 350
     strategy:
       fail-fast: false
-      max-parallel: 15
+      # 5 concurrent jobs at statscrew.com == 5 req/s at delay_seconds 1.0. See the
+      # per-host note above before raising this.
+      max-parallel: 5
       matrix:
         target:
           # statscrew -- 5 shards: the roster GAP plus two pilot-proven stat families
@@ -51,11 +64,11 @@ jobs:
         id: gate
         run: |
           want="${{ github.event.inputs.only_source }}"
-          if [ -n "$want" ] && [ "$want" != "${{ matrix.target.source }}" ]; then
-            echo "run=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "run=true" >> "$GITHUB_OUTPUT"
-          fi
+          want_dataset="${{ github.event.inputs.only_dataset }}"
+          run=true
+          if [ -n "$want" ] && [ "$want" != "${{ matrix.target.source }}" ]; then run=false; fi
+          if [ -n "$want_dataset" ] && [ "$want_dataset" != "${{ matrix.target.dataset }}" ]; then run=false; fi
+          echo "run=$run" >> "$GITHUB_OUTPUT"
       - name: Census the gap (seed inventory minus holdings)
         if: steps.gate.outputs.run == 'true'
         run: >-

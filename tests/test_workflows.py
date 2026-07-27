@@ -101,17 +101,36 @@ def test_pilot_workflow_samples_and_never_registers() -> None:
     assert "source_catalog" not in text, "a pilot must never write the catalog"
 
 
-def test_gap_harvest_is_manual_bounded_and_spread_across_hosts() -> None:
-    """Stage 3 harvests only measured GAPS, and its parallelism is spread across hosts
-    and datasets rather than pointed at one site. Per-host request rate is the product
-    of that spread and the catalog delay, so shard counts and politeness move together.
+def test_gap_harvest_is_manual_bounded_and_polite_PER_HOST() -> None:
+    """Stage 3 harvests only measured GAPS, and its parallelism is bounded PER HOST.
+
+    The original assertion here pinned `max-parallel: 15` and justified it as parallelism
+    "spread across hosts" -- but every job in the matrix targets statscrew.com, so the
+    real setting was 15 concurrent streams at one small independent archive. One runner
+    was then refused robots.txt, logged 477 denials in 0.65s and still reported green;
+    178 team-seasons from its partition remain uncaptured. The cap must be derived from
+    the matrix, not asserted independently of it.
     """
-    text = (WORKFLOWS / "witness-harvest-gap.yml").read_text(encoding="utf-8")
+    path = WORKFLOWS / "witness-harvest-gap.yml"
+    text = path.read_text(encoding="utf-8")
     data = yaml.load(text, Loader=yaml.BaseLoader)
     assert "workflow_dispatch" in data["on"]
     assert "push" not in data["on"], "a bulk harvest must never fire from a code edit"
     assert "pytest" in text
-    assert "max-parallel: 15" in text
     assert "timeout-minutes:" in text
     assert "--max-pages" in text and "--num-shards" in text
     assert "upload-artifact@v4" in text and "retention-days: 14" in text
+
+    strategy = data["jobs"]["harvest"]["strategy"]
+    cap = int(strategy["max-parallel"])
+    hosts = {target["source"] for target in strategy["matrix"]["target"]}
+    catalog = yaml.safe_load(
+        (Path(__file__).parents[1] / "harvest" / "source_catalog.yaml").read_text(encoding="utf-8")
+    )
+    slowest = min(float(catalog["sources"][host]["delay_seconds"]) for host in hosts)
+    # Worst case every running job sits on the same host, because the matrix may be
+    # filtered to one source at dispatch time.
+    assert cap / slowest <= 6.0, (
+        f"max-parallel {cap} over {sorted(hosts)} at {slowest}s delay is "
+        f"{cap / slowest:.0f} req/s against a single host"
+    )
