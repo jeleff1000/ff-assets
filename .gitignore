@@ -2,3 +2,9 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 out/
+
+# Harvest artifacts downloaded for import. They are COPIES: the authoritative
+# copy is the GitHub Actions artifact (14-day expiry) and, once imported, the
+# immutable lake run dir under ff_assets/<source>/<dataset>/<run_id>/. Committing
+# them would put ~9,900 retained .html.gz per shard into git history.
+tmp/
